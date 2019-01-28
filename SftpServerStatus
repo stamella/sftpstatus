@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting" xmlns:context="http://www.springframework.org/schema/context" xmlns:cluster="http://www.mulesoft.org/schema/mule/ee/cluster" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp" xmlns:dynamicscrm="http://www.mulesoft.org/schema/mule/dynamicscrm" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/dynamicscrm http://www.mulesoft.org/schema/mule/dynamicscrm/current/mule-dynamicscrm.xsd
+http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd">
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/>
+    <sftp:connector name="SFTP"  validateConnections="true" doc:name="SFTP" pollingFrequency="100000"/>
+    <flow name="testFlow">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/test" allowedMethods="GET" doc:name="HTTP"/>
+        <set-variable variableName="config" value="${sftp}" doc:name="Variable"/>
+        <set-payload value="#[flowVars.config.split(',')]" doc:name="payload"/>
+        <expression-component doc:name="Expression"><![CDATA[flowVars.result = new java.util.ArrayList();]]></expression-component>
+        <foreach collection="#[payload]" doc:name="For Each">
+            <flow-ref name="serverstatusFlow" doc:name="serverstatusFlow"/>
+        </foreach>
+        <set-payload value="#[flowVars['result']]" doc:name="Set Payload"/>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+payload]]></dw:set-payload>
+        </dw:transform-message>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+    </flow>
+    <flow name="serverstatusFlow" processingStrategy="synchronous">
+        <dw:transform-message doc:name="properties">
+            <dw:set-variable variableName="sftphosts"><![CDATA[%dw 1.0
+%output application/java
+---
+
+{
+  host:	p(payload ++ '.host'),
+  port: p(payload ++ '.port'),
+  path: p(payload ++ '.fileLocation'),
+  user: p(payload ++ '.usernames'),
+  password: p(payload ++ '.password')
+}]]></dw:set-variable>
+        </dw:transform-message>
+        <sftp:outbound-endpoint exchange-pattern="one-way" connector-ref="SFTP" outputPattern="#[payload].txt" host="#[flowVars['sftphosts']['host']]" port="#[flowVars['sftphosts']['port']]" path="#[flowVars['sftphosts']['path']]" user="#[flowVars['sftphosts']['user']]" password="#[flowVars['sftphosts']['password']]" responseTimeout="10000" doc:name="SFTP"/>
+        <set-variable variableName="status" value="&quot;success&quot;" doc:name="status"/>
+        <set-payload value="{ Host:#[payload] User:#[flowVars.sftphosts.user] : status:#[flowVars.status]  }" doc:name="Set Payload"/>
+        <expression-transformer expression="#[flowVars['result'].add(payload)]" doc:name="Expression"/>
+        <logger message="#[message.payload] is up: success" level="INFO" doc:name="Logger"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <set-variable variableName="status" value="&quot;failure&quot;" doc:name="status"/>
+           <set-payload value="{ Host:#[payload] User:#[flowVars.sftphosts.user] : status:#[flowVars.status]     errorMessage: #[exception.getCause()]  }" doc:name="Set Exception Payload"/>
+            <expression-transformer expression="#[flowVars['result'].add(payload)]" doc:name="Expression"/>
+            <logger message="#[message.payload]" level="INFO" doc:name="Logger"/>
+        </catch-exception-strategy>
+    </flow>
+    
+    
+</mule>
+
